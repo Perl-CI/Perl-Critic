@@ -27,7 +27,7 @@ our $VERSION = '1.126';
 
 use Exporter 'import';
 
-Readonly::Array our @EXPORT_OK => qw< run >;
+Readonly::Array our @EXPORT_OK => qw< run2json >;
 
 Readonly::Hash our %EXPORT_TAGS => (
     all             => [ @EXPORT_OK ],
@@ -57,11 +57,11 @@ sub _out {
 
 #-----------------------------------------------------------------------------
 
-sub run {
+sub run2json {
     my %options    = _get_options();
     @files         = _get_input(@ARGV);
 
-    my ($violations, $had_error_in_file) = _critique(\%options, @files);
+    my ($violations, $had_error_in_file) = _critique2json(\%options, @files);
 
     return $EXIT_HAD_FILE_PROBLEMS  if $had_error_in_file;
     return $EXIT_NO_FILES           if not defined $violations;
@@ -216,7 +216,7 @@ sub _get_input {
 
 #------------------------------------------------------------------------------
 
-sub _critique {
+sub _critique2json {
 
     my ( $opts_ref, @files_to_critique ) = @_;
     @files_to_critique || die "No perl files were found.\n";
@@ -236,12 +236,29 @@ sub _critique {
     my $number_of_violations = undef;
     my $had_error_in_file = 0;
 
+	use Data::Printer;
+	my %data = ( perlcritic_version => $VERSION );
+
     for my $file (@files_to_critique) {
 
         eval {
             my @violations = $critic->critique($file);
             $number_of_violations += scalar @violations;
 
+			foreach my $v (@violations)
+			{
+				push @{$data{violations}}, 
+					{
+						filename => $v->filename(),
+						line => $v->line_number(),
+						column => $v->column_number(),
+						
+						policy => $v->policy(),
+						description => $v->description(),
+						explanation => $v->explanation(),
+						severity => $v->severity()	 
+					};
+			}
             if (not $opts_ref->{'-statistics-only'}) {
                 _render_report( $file, $opts_ref, @violations )
             }
@@ -268,7 +285,35 @@ sub _critique {
     if ( $opts_ref->{-statistics} or $opts_ref->{'-statistics-only'} ) {
         my $stats = $critic->statistics();
         _report_statistics( $opts_ref, $stats );
+
+		$data{statistics} = {
+			files     	=> $stats->modules(),
+            statement	=> $stats->statements_other_than_subs(),
+            subs        => $stats->subs(),
+
+			lines 				=> $stats->lines(),
+			lines_of_blank 		=> $stats->lines_of_blank(),
+            lines_of_comment	=> $stats->lines_of_comment(),
+            lines_of_data     	=> $stats->lines_of_data(),
+            lines_of_perl    	=> $stats->lines_of_perl(),
+            lines_of_pod       	=> $stats->lines_of_pod(),
+
+			total_violations        	=> $stats->total_violations(),
+			violations_by_policy		=> $stats->violations_by_policy(),
+			violations_by_severity 		=> $stats->violations_by_severity(),
+			violations_per_file			=> $stats->violations_per_file(),
+			violations_per_statement	=> $stats->violations_per_statement(),
+			violations_per_line_of_code	=> $stats->violations_per_line_of_code()
+
+			}
     }
+
+	use JSON;
+	use Path::Tiny;
+	my $json = JSON->new->allow_nonref;
+ 
+ 	my $json_text = $json->encode(\%data);
+	path("perlcritic.json")->spew($json_text);
 
     return $number_of_violations, $had_error_in_file;
 }
